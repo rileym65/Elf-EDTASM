@@ -1,23 +1,95 @@
 ; *******************************************************************
-; *** This software is copyright 2006 by Michael H Riley          ***
+; *** This software is copyright 2006-2020 by Michael H Riley     ***
 ; *** You have permission to use, modify, copy, and distribute    ***
 ; *** this software so long as this copyright notice is retained. ***
 ; *** This software may not be used in commercial applications    ***
 ; *** without express written permission from the author.         ***
 ; *******************************************************************
 
-include    bios.inc
+;[RLA] These are defined on the rcasm command line!
+;[RLA] #define ELFOS            ; build the version that runs under Elf/OS
+;[RLA] #define STGROM           ; build the STG EPROM version
+;[RLA] #define PICOROM          ; define for Mike's PIcoElf version
 
-#define TESTL   123h
+;[RLA]   rcasm doesn't have any way to do a logical "OR" of assembly
+;[RLA] options, so define a master "ANYROM" option that's true for
+;[RLA] any of the ROM conditions...
+
+#ifdef PICOROM
+#define ANYROM
+#endif
+
+#ifdef STGROM
+#define ANYROM
+#endif
+
+#ifdef STGROM
+;[RLA] STG ROM addresses and options
+include config.inc
+#endif
+
+include    bios.inc
 
 ; RA - text buffer pointer
 ; R8 - Reg1 (line number)
 ; R9 - Reg2 (count)
 
-#ifdef ELF2K
-           org     0d000h
-           lbr     start
-           lbr     restart
+#ifdef PICOROM
+;[RLA] Visual/02 magic addresses for Mike's PicoElf EPROM ...
+visual:    equ     0e000h
+visualds:  equ     07e00h
+;[RLA] XMODEM entry vectors for Mike's PicoElf EPROM ...
+xopenw:    equ     08006h
+xopenr:    equ     08009h
+xread:     equ     0800ch
+xwrite:    equ     0800fh
+xclosew:   equ     08012h
+xcloser:   equ     08015h
+#endif
+#ifdef STGROM
+;[RLA] XMODEM entry vectors for the STG EPROM ...
+xopenw:    equ     XMODEM + 0*3
+xopenr:    equ     XMODEM + 1*3
+xread:     equ     XMODEM + 2*3
+xwrite:    equ     XMODEM + 3*3
+xclosew:   equ     XMODEM + 4*3
+xcloser:   equ     XMODEM + 5*3
+;[RLA]   The symbol "visual" defines the entry point to Visual/02 in the EPROM.
+;[RLA] With the STG ROM we don't have to worry about this, because the config
+;[RLA] defines this entry.  Actually there's a minor kludge - config actually
+;[RLA] defines "VISUAL" (upper case) and EDTASM wants "visual" (lower case) but
+;[RLA] the rcasm preprocessor is case insensitive.  If that ever changes,
+;[RLA] uncomment the following line ...
+;;visual:    equ     VISUAL
+;[RLA]   "visualds" is the address of the Visual/02 data segment.  It's always
+;[RLA] the page just below the STGROM monitor's page ..
+visualds:  equ     RAMPAGE-0100h
+#endif
+
+#ifdef STGROM
+           org     EDTASM
+#else
+           org     0b000h
+#endif
+
+#ifdef ANYROM
+           lbr     pico1
+           lbr     pico2
+pico1:     mov     rf,textbuf          ; zero edit buffer
+           ldi     0
+           str     rf
+pico2:     mov     rf,curline
+           ldi     0
+           str     rf
+           inc     rf
+           str     rf
+           mov     rf,baud             ; need to write baud constant
+           ghi     re                  ; get baud constant
+           str     rf                  ; and store it
+           mov     r6,restart          ; restart address
+           mov     r2,stack            ; set stack
+           sex     r2                  ; point x to stack
+           lbr     f_initcall          ; and setup SCALL/SRET
 #else
            org     0c000h
            lbr     cold
@@ -176,7 +248,7 @@ atoidn:    nop
            shr
            sep     sret                ; return to caller
 
-#ifndef ELF2K
+#ifndef STGROM
 start:     sep     scall               ; set terminal baud rate
            dw      f_setbd
            ldi     high baud           ; point to baud storage
@@ -205,13 +277,16 @@ start:     ldi     high stack          ; set initial stack frame
            str     rf
            lbr     newfile             ; jump if file does not exist
 
-#ifndef ELF2K
+#ifndef STGROM
 restart:   ldi     high baud           ; point to baud storage
            phi     rf
            ldi     low baud
            plo     rf
            ldn     rf                  ; get baud value
            phi     re
+           ldi     0ch                 ; form feed
+           sep     scall               ; clear screen
+           dw      f_type
            lbr     mainlp              ; back to editor
 #else
 restart:   ldi     high stack          ; set initial stack frame
@@ -271,6 +346,13 @@ arg1non:   ldn     rf                  ; get character in buffer
            glo     rd
            plo     r9
 noarg2:    ldn     rf                  ; get command
+           sep     scall               ; check if lc
+           dw      islc
+           lbnf    noarg2_1            ; jump if not
+           ldn     rf                  ; convert to uppercase
+           smi     32
+           str     rf
+noarg2_1:  ldn     rf                  ; get command
            smi     'A'                 ; check for assemble command
            lbz     doasm
            ldn     rf
@@ -305,8 +387,17 @@ noarg2:    ldn     rf                  ; get command
            lbz     go
            ldn     rf                  ; quit command
            smi     'Q'                 ; check for quit command
-#ifdef ELF2K
-           lbz     08003h              ; monitor re-entry point
+#ifdef ANYROM
+           lbz     08003h
+           ldn     rf                  ; recover command
+           smi     'V'                 ; check for visual/02
+           lbz     visual02            ; jump if so
+           ldn     rf                  ; recover command
+           smi     'S'                 ; see if save
+           lbz     save                ; jump if so
+           ldn     rf                  ; recover command
+           smi     'L'                 ; see if save
+           lbz     load                ; jump if so
 #else
            lbz     0f900h
 #endif
@@ -320,6 +411,16 @@ noarg2:    ldn     rf                  ; get command
            dw      f_msg
            lbr     mainlp
   
+#ifdef ANYROM
+visual02:  mov     r7,startaddr        ; point to start address
+           mov     rf,visualds         ; point to visual/02 data segment
+           lda     r7                  ; retrieve high byte of start address
+           str     rf                  ; store into visual/02 R[0]
+           inc     rf
+           lda     r7                  ; get low byte
+           str     rf
+           lbr     visual+3
+#endif
 new:       ldi     high textbuf        ; need to set terminator in text buffer
            phi     rf
            ldi     low textbuf
@@ -1589,6 +1690,9 @@ asmloop:   ldi     high buffer         ; point to buffer
            lbdf    asmloopdn           ; jump if end of file reached
            glo     rc                  ; get character count
            lbz     asmloop             ; jump if at end of file
+           mov     rf,buffer           ; conver to upper case
+           sep     scall
+           dw      touc
 asmnodsp:  ldi     high buffer         ; point back to input line
            phi     rf
            ldi     low buffer
@@ -1867,6 +1971,84 @@ addsym2:   dec     r8                  ; point back to previous char
            str     rf
            sep     sret                ; return to caller
            
+save:      sep     scall               ; open XMODEM channel
+           dw      xopenw
+           mov     rc,textbuf          ; point to edit buffer
+savelp:    ldn     rc                  ; get size next line
+           lbz     save1               ; jump if end of buffer
+           str     r2                  ; store for add
+           glo     rc                  ; get current address
+           add                         ; add offset
+           plo     rc
+           ghi     rc                  ; propagate carry
+           adci    0
+           phi     rc
+           lbr     savelp              ; look at next line
+save1:     inc     rc                  ; move past terminator
+           ghi     rc                  ; get high byte of address
+           smi     baud.1              ; offset from base
+           phi     rc                  ; rc now has count
+           mov     rf, buffer          ; point to buffer
+           ghi     rc                  ; write byte count
+           str     rf
+           inc     rf
+           glo     rc
+           str     rf
+           dec     rf                  ; move back to beginning of buffer
+           push    rc                  ; save count
+           mov     rc,2                ; two bytes to write
+           sep     scall               ; send to XMODEM channel
+           dw      xwrite
+           mov     rf,baud             ; point to base
+           pop     rc                  ; recover count
+           sep     scall               ; write text buffer to XMODEM channel
+           dw      xwrite
+           sep     scall               ; close XMODEM channel
+           dw      xclosew
+           lbr     mainlp              ; then back to main loop
+   
+load:      sep     scall               ; open XMODEM channel
+           dw      xopenr
+           mov     rf,buffer           ; where to put count
+           mov     rc,2                ; need to read two bytes
+           sep     scall               ; read them
+           dw      xread
+           mov     rf,buffer           ; need to retrieve count
+           lda     rf                  ; get high byte
+           phi     rc                  ; put into count
+           ldn     rf                  ; get low byte
+           plo     rc                  ; rc now has count
+           mov     rf,baud             ; beginning of data
+           sep     scall               ; read data from XMODEM channel
+           dw      xread
+           sep     scall               ; close XMODEM channel
+           dw      xcloser
+           lbr     mainlp              ; and return to main loop
+
+; **********************************************************
+; ***** Convert string to uppercase, honor quoted text *****
+; **********************************************************
+touc:      ldn     rf                  ; check for quote
+           smi     027h
+           lbz     touc_qt             ; jump if quote
+           ldn     rf                  ; get byte from string
+           lbz     touc_dn             ; jump if done
+           smi     'a'                 ; check if below lc
+           lbnf    touc_nxt            ; jump if so
+           smi     27                  ; check upper rage
+           lbdf    touc_nxt            ; jump if above lc
+           ldn     rf                  ; otherwise convert character to lc
+           smi     32
+           str     rf
+touc_nxt:  inc     rf                  ; point to next character
+           lbr     touc                ; loop to check rest of string
+touc_dn:   sep     sret                ; return to caller
+touc_qt:   inc     rf                  ; move past quote
+touc_qlp:  lda     rf                  ; get next character
+           lbz     touc_dn             ; exit if terminator found
+           smi     027h                ; check for quote charater
+           lbz     touc                ; back to main loop if quote
+           lbr     touc_qlp            ; otherwise keep looking
 
 hello:     db      'Edt/Asm (02/21/06)',10,13
            db      '(c) Copyright 2006 by Michael H. Riley',10,13,0
@@ -1969,31 +2151,24 @@ insttab:   db      'AD',('D'+80h),1,0f4h,0
 
 
 
-           org     2000h
-curline:   dw      0
-reg1:      dw      0
-reg2:      dw      0
-char:      db      0
-lastsym:   dw      0
-pass:      db      0
-bytecnt:   db      0
-curaddr:   dw      0
-symtab:    dw      0
-startaddr: dw      0
-#ifndef ELF2K
-baud:      db      0
-#endif
-jump:      db      0,0,0               ; jump to special routine
-numbuf:    db      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-buffer:    db      0
-           org     $+128
-outbuffer: db      0
-           org     $+336
-stack:     db      0
-
-           db      TESTL
-
+           org     4000h
+baud:      equ     $
+char:      equ     $+1
+pass:      equ     $+2
+bytecnt:   equ     $+3
+curline:   equ     $+4
+reg1:      equ     $+6
+reg2:      equ     $+8
+lastsym:   equ     $+0ah
+curaddr:   equ     $+0ch
+symtab:    equ     $+0eh
+startaddr: equ     $+010h
+jump:      equ     $+012h
+numbuf:    equ     $+015h
+buffer:    equ     $+025h
+outbuffer: equ     $+0a6h
+stack:     equ     $+1f7h
 ; text buffer format
 ; byte size of line (0 if end of buffer)
-textbuf:   db      0
+textbuf:   equ     $+1f9
 

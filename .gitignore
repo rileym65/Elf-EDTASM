@@ -1,3 +1,5 @@
 bios.inc
+config.inc
 *.prg
+*.lst
 x.x

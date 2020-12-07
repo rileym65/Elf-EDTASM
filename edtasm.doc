@@ -37,6 +37,7 @@ Editor Commands:
           U       - Move up one line
         ,nU       - Move up n lines
           Q       - Quit to monitor (0F900h, or 08003h on Elf2K)
+          V       - Switch to Visual/02 (Pico/Elf only)
 
 Assembler Line Format:
 ----------------------
