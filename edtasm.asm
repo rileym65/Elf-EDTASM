@@ -15,38 +15,42 @@
 ;[RLA] options, so define a master "ANYROM" option that's true for
 ;[RLA] any of the ROM conditions...
 
+#ifdef MCHIP
+#define ANYROM
+#define CODE     03000h
+#define DATA     0c000h
+visual:    equ     06000h
+visualds:  equ     0fe00h
+xopenw:    equ     07006h
+xopenr:    equ     07009h
+xread:     equ     0700ch
+xwrite:    equ     0700fh
+xclosew:   equ     07012h
+xcloser:   equ     07015h
+exitaddr:  equ     07003h
+#endif
+
 #ifdef PICOROM
 #define ANYROM
-#endif
-
-#ifdef STGROM
-#define ANYROM
-#endif
-
-#ifdef STGROM
-;[RLA] STG ROM addresses and options
-include config.inc
-#endif
-
-include    bios.inc
-
-; RA - text buffer pointer
-; R8 - Reg1 (line number)
-; R9 - Reg2 (count)
-
-#ifdef PICOROM
-;[RLA] Visual/02 magic addresses for Mike's PicoElf EPROM ...
+#define CODE     0b000h
+#define DATA     04000h
 visual:    equ     0e000h
 visualds:  equ     07e00h
-;[RLA] XMODEM entry vectors for Mike's PicoElf EPROM ...
 xopenw:    equ     08006h
 xopenr:    equ     08009h
 xread:     equ     0800ch
 xwrite:    equ     0800fh
 xclosew:   equ     08012h
 xcloser:   equ     08015h
+exitaddr:  equ     08003h
 #endif
+
 #ifdef STGROM
+#define ANYROM
+;[RLA] STG ROM addresses and options
+include config.inc
+#define CODE     EDTASM
+#define DATA     04000h
 ;[RLA] XMODEM entry vectors for the STG EPROM ...
 xopenw:    equ     XMODEM + 0*3
 xopenr:    equ     XMODEM + 1*3
@@ -54,6 +58,7 @@ xread:     equ     XMODEM + 2*3
 xwrite:    equ     XMODEM + 3*3
 xclosew:   equ     XMODEM + 4*3
 xcloser:   equ     XMODEM + 5*3
+exitaddr:  equ     08003h
 ;[RLA]   The symbol "visual" defines the entry point to Visual/02 in the EPROM.
 ;[RLA] With the STG ROM we don't have to worry about this, because the config
 ;[RLA] defines this entry.  Actually there's a minor kludge - config actually
@@ -66,11 +71,13 @@ xcloser:   equ     XMODEM + 5*3
 visualds:  equ     RAMPAGE-0100h
 #endif
 
-#ifdef STGROM
-           org     EDTASM
-#else
-           org     0b000h
-#endif
+include    bios.inc
+
+; RA - text buffer pointer
+; R8 - Reg1 (line number)
+; R9 - Reg2 (count)
+
+           org     CODE
 
 #ifdef ANYROM
            lbr     pico1
@@ -388,7 +395,7 @@ noarg2_1:  ldn     rf                  ; get command
            ldn     rf                  ; quit command
            smi     'Q'                 ; check for quit command
 #ifdef ANYROM
-           lbz     08003h
+           lbz     exitaddr
            ldn     rf                  ; recover command
            smi     'V'                 ; check for visual/02
            lbz     visual02            ; jump if so
@@ -2151,7 +2158,7 @@ insttab:   db      'AD',('D'+80h),1,0f4h,0
 
 
 
-           org     4000h
+           org     DATA
 baud:      equ     $
 char:      equ     $+1
 pass:      equ     $+2
